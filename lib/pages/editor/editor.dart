@@ -123,6 +123,9 @@ class EditorState extends State<Editor> {
   /// Whether the platform can rasterize a pdf
   bool canRasterPdf = true;
 
+  List<Stroke>? clipboardStrokes;
+  List<EditorImage>? clipboardImages;
+
   @override
   void initState() {
     DynamicMaterialApp.addFullscreenListener(_setState);
@@ -204,19 +207,34 @@ class EditorState extends State<Editor> {
   Keybinding? _ctrlZ;
   Keybinding? _ctrlY;
   Keybinding? _ctrlShiftZ;
+  Keybinding? _ctrlShiftC;
+  Keybinding? _ctrlX;
+  Keybinding? _ctrlV;
   void _assignKeybindings() {
     _ctrlZ = Keybinding([KeyCode.ctrl, KeyCode.from(LogicalKeyboardKey.keyZ)], inclusive: true);
     _ctrlY = Keybinding([KeyCode.ctrl, KeyCode.from(LogicalKeyboardKey.keyY)], inclusive: true);
     _ctrlShiftZ = Keybinding([KeyCode.ctrl, KeyCode.shift, KeyCode.from(LogicalKeyboardKey.keyZ)], inclusive: true);
+    _ctrlShiftC = Keybinding([KeyCode.ctrl, KeyCode.shift, KeyCode.from(LogicalKeyboardKey.keyC)],
+        inclusive: true);
+    _ctrlX = Keybinding([KeyCode.ctrl, KeyCode.from(LogicalKeyboardKey.keyX)],
+        inclusive: true);
+    _ctrlV = Keybinding([KeyCode.ctrl, KeyCode.from(LogicalKeyboardKey.keyV)],
+        inclusive: true);
 
     Keybinder.bind(_ctrlZ!, undo);
     Keybinder.bind(_ctrlY!, redo);
     Keybinder.bind(_ctrlShiftZ!, redo);
+    Keybinder.bind(_ctrlShiftC!, tryCopy);
+    Keybinder.bind(_ctrlX!, tryCut);
+    Keybinder.bind(_ctrlV!, tryPaste);
   }
   void _removeKeybindings() {
     if (_ctrlZ != null) Keybinder.remove(_ctrlZ!);
     if (_ctrlY != null) Keybinder.remove(_ctrlY!);
     if (_ctrlShiftZ != null) Keybinder.remove(_ctrlShiftZ!);
+    if (_ctrlShiftC != null) Keybinder.remove(_ctrlShiftC!);
+    if (_ctrlX != null) Keybinder.remove(_ctrlX!);
+    if (_ctrlV != null) Keybinder.remove(_ctrlV!);
   }
 
   /// Creates pages until the given page index exists,
@@ -268,6 +286,221 @@ class EditorState extends State<Editor> {
         );
       }
     }
+  }
+
+  void pasteCut(Offset? position) {
+    assert((clipboardStrokes == null) == (clipboardImages == null));
+    setState(() {
+      final pageIndex = dragPageIndex ?? currentPageIndex;
+      final currentPage = coreInfo.pages[pageIndex];
+
+      final oldStrokes = clipboardStrokes!.map((stroke) => stroke.copy()).toList();
+      final oldImages = clipboardImages!.map((image) => image.copy()).toList();
+      final strokes = clipboardStrokes!.map((stroke) => stroke.copy()).toList();
+      final images = clipboardImages!.map((image) => image.copy()).toList();
+
+      // find the starting position
+      Rect? startRect;
+
+      if (strokes.isEmpty) {
+        if (images.isEmpty) {
+          return;
+        } else {
+          startRect = images[0].dstRect;
+        }
+      } else {
+        for (final stroke in strokes) {
+          Rect? r = stroke.rect;
+          if (r != null) {
+            startRect = r;
+            break;
+          }
+        }
+      }
+      // `startRect` is set in every case
+      Rect dimensions = startRect!;
+
+      for (final stroke in strokes) {
+        Rect? r = stroke.rect;
+        if (r != null) {
+          dimensions = dimensions.expandToInclude(r);
+        }
+      }
+
+      for (final image in images) {
+        dimensions = dimensions.expandToInclude(image.dstRect);
+      }
+
+      // move all strokes and images to that position
+      double minX = dimensions.left;
+      double minY = dimensions.right;
+
+      double startX = minX;
+      double startY = minY;
+      if (position != null) {
+        startX = position.dx;
+        startY = position.dy;
+      }
+
+      for (var stroke in strokes) {
+        stroke.pageIndex = pageIndex;
+        stroke.offsetBy(startX - minX, startY - minY);
+        currentPage.insertStroke(stroke);
+      }
+      for (final image in images) {
+        image.pageIndex = pageIndex;
+        image.dstRect = image.dstRect
+            .shift(Offset(minX - image.dstRect.left, minY - image.dstRect.top));
+        currentPage.images.add(image);
+      }
+      history.recordChange(EditorHistoryItem(
+        type: EditorHistoryItemType.paste,
+        pageIndex: pageIndex,
+        strokes: strokes,
+        images: images,
+        oldStrokes: oldStrokes,
+        oldImages: oldImages,
+      ));
+    });
+  }
+
+  void showError(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(text),
+      showCloseIcon: true,
+    ));
+  }
+
+  void tryCopy() {
+    SelectResult? cutInfo;
+    if (currentTool is Select) {
+      final select = currentTool as Select;
+      if (select.doneSelecting) {
+        cutInfo = select.selectResult;
+      }
+    }
+
+    if (cutInfo == null) {
+      showError('No content selected! Use the select tool first');
+    } else {
+      setState(() {
+        clipboardStrokes = cutInfo!.strokes;
+        clipboardImages = cutInfo.images;
+        // copy can't be undone
+      });
+    }
+  }
+
+  void tryCut() {
+    SelectResult? cutInfo;
+    if (currentTool is Select) {
+      final select = currentTool as Select;
+      if (select.doneSelecting) {
+        cutInfo = select.selectResult;
+      }
+    }
+
+    if (cutInfo == null) {
+      showError('No content selected! Use the select tool first');
+    } else {
+      final strokes = cutInfo.strokes;
+      final images = cutInfo.images;
+      setState(() {
+        clipboardStrokes = strokes;
+        clipboardImages = images;
+        removeStrokesAndImages(strokes, images);
+        removeExcessPages();
+        history.recordChange(EditorHistoryItem(
+          type: EditorHistoryItemType.cut,
+          pageIndex: dragPageIndex!,
+          strokes: strokes,
+          images: images,
+        ));
+        Select.currentSelect.unselect();
+      });
+    }
+  }
+
+  void tryPaste() {
+    if (clipboardStrokes == null) {
+      showError('No content copied!');
+    } else {
+      final pos = coreInfo.pages[dragPageIndex ?? currentPageIndex].renderBox!
+          .globalToLocal(mousePosition);
+      pasteCut(pos);
+    }
+  }
+
+  void removeStrokesAndImages(List<Stroke> strokes, List<EditorImage> images) {
+    for (final stroke in strokes) {
+      final page = coreInfo.pages[stroke.pageIndex];
+      assert(page.strokes.remove(stroke));
+    }
+    for (final image in images) {
+      final page = coreInfo.pages[image.pageIndex];
+      assert(page.images.remove(image));
+    }
+  }
+
+  void longPress(Offset position) {
+    List<PopupMenuItem> items = [];
+
+    SelectResult? cutInfo;
+    if (currentTool is Select) {
+      final select = currentTool as Select;
+      if (select.doneSelecting) {
+        cutInfo = select.selectResult;
+      }
+    }
+
+    if (cutInfo != null) {
+      items.add(PopupMenuItem(
+          child: const Text('copy'),
+          onTap: () {
+            setState(() {
+              clipboardStrokes = cutInfo!.strokes;
+              clipboardImages = cutInfo.images;
+              // copy can't be undone
+            });
+          }));
+      items.add(PopupMenuItem(
+          child: const Text('cut'),
+          onTap: () {
+            final strokes = cutInfo!.strokes;
+            final images = cutInfo.images;
+            setState(() {
+              clipboardStrokes = strokes;
+              clipboardImages = images;
+              removeStrokesAndImages(strokes, images);
+              removeExcessPages();
+              history.recordChange(EditorHistoryItem(
+                type: EditorHistoryItemType.cut,
+                pageIndex: dragPageIndex!,
+                strokes: strokes,
+                images: images,
+              ));
+              Select.currentSelect.unselect();
+            });
+          }));
+    } else {
+      if (clipboardStrokes != null) {
+        items.add(PopupMenuItem(
+            child: const Text('paste'),
+            onTap: () {
+              pasteCut(position);
+            }));
+      } else {
+        items.add(const PopupMenuItem(
+          enabled: false,
+          child: Text('paste'),
+        ));
+      }
+    }
+    showMenu(
+        context: context,
+        position: RelativeRect.fromLTRB(
+            position.dx - 20, position.dy - 20, position.dx, position.dy),
+        items: items);
   }
 
   void undo([EditorHistoryItem? item]) {
@@ -379,6 +612,19 @@ class EditorState extends State<Editor> {
           final quill = coreInfo.pages[item.pageIndex].quill;
           quill.controller.redo();
           break;
+
+        case EditorHistoryItemType.cut:
+          for (final stroke in item.strokes) {
+            coreInfo.pages[stroke.pageIndex].insertStroke(stroke);
+          }
+          for (final image in item.images) {
+            coreInfo.pages[image.pageIndex].images.add(image);
+          }
+          break;
+
+        case EditorHistoryItemType.paste:
+          removeStrokesAndImages(item.strokes, item.images);
+          break;
       }
 
       if (item.type != EditorHistoryItemType.move) {
@@ -419,6 +665,12 @@ class EditorState extends State<Editor> {
         break;
       case EditorHistoryItemType.quillUndoneChange: // this will never happen
         throw Exception('history should not contain quillUndoneChange items');
+      case EditorHistoryItemType.cut:
+        undo(item.copyWith(type: EditorHistoryItemType.paste));
+        break;
+      case EditorHistoryItemType.paste:
+        undo(item.copyWith(type: EditorHistoryItemType.cut));
+        break;
     }
   }
 
@@ -440,6 +692,8 @@ class EditorState extends State<Editor> {
 
   int? dragPageIndex;
   double? currentPressure;
+  Offset mousePosition = Offset.zero;
+
   /// if [pressureWasNegative], switch back to pen when pressure becomes positive again
   bool pressureWasNegative = false;
   bool isDrawGesture(ScaleStartDetails details) {
@@ -593,6 +847,7 @@ class EditorState extends State<Editor> {
       currentTool = Pen.currentPen;
     }
   }
+
   void onInteractionEnd(ScaleEndDetails details) {
     // reset after 1ms to keep track of the same gesture only
     _lastSeenPointerCountTimer?.cancel();
@@ -600,6 +855,7 @@ class EditorState extends State<Editor> {
       lastSeenPointerCount = 0;
     });
   }
+
   void onPressureChanged(double? pressure) {
     currentPressure = pressure == 0.0 ? null : pressure;
     if (currentPressure == null) return;
@@ -608,6 +864,10 @@ class EditorState extends State<Editor> {
       pressureWasNegative = true;
       currentTool = Eraser();
     }
+  }
+
+  void onMouseMoved(Offset position) {
+    mousePosition = position;
   }
 
   void onMoveImage(EditorImage image, Rect offset) {
@@ -1043,7 +1303,8 @@ class EditorState extends State<Editor> {
       onDrawUpdate: onDrawUpdate,
       onDrawEnd: onDrawEnd,
       onPressureChanged: onPressureChanged,
-
+      onMouseMoved: onMouseMoved,
+      longPress: longPress,
       undo: undo,
       redo: redo,
 

@@ -115,11 +115,15 @@ class EditorHistoryItem {
     this.offset,
     this.page,
     this.quillChange,
+    this.oldStrokes,
+    this.oldImages,
   })  : assert(type != EditorHistoryItemType.move || offset != null, 'Offset must be provided for move'),
         assert(type != EditorHistoryItemType.deletePage || page != null, 'Page must be provided for deletePage'),
         assert(type != EditorHistoryItemType.insertPage || page != null, 'Page must be provided for insertPage'),
         assert(type != EditorHistoryItemType.quillChange || quillChange != null, 'Quill change must be provided for quillChange'),
-        assert(type != EditorHistoryItemType.quillUndoneChange || quillChange != null, 'Quill change must be provided for quillUndoneChange');
+        assert(type != EditorHistoryItemType.quillUndoneChange || quillChange != null, 'Quill change must be provided for quillUndoneChange'),
+        assert(type != EditorHistoryItemType.paste || oldStrokes != null, 'oldStrokes must be provided for paste'),
+        assert(type != EditorHistoryItemType.paste || oldImages != null, 'oldImages must be provided for paste');
 
   final EditorHistoryItemType type;
   final int pageIndex;
@@ -128,6 +132,8 @@ class EditorHistoryItem {
   final Rect? offset;
   final EditorPage? page;
   final DocChange? quillChange;
+  final List<Stroke>? oldStrokes;
+  final List<EditorImage>? oldImages;
 
   EditorHistoryItem copyWith({
     EditorHistoryItemType? type,
@@ -137,6 +143,8 @@ class EditorHistoryItem {
     Rect? offset,
     EditorPage? page,
     DocChange? quillChange,
+    List<Stroke>? oldStrokes,
+    List<EditorImage>? oldImages,
   }) {
     return EditorHistoryItem(
       type: type ?? this.type,
@@ -146,6 +154,8 @@ class EditorHistoryItem {
       offset: offset ?? this.offset,
       page: page ?? this.page,
       quillChange: quillChange ?? this.quillChange,
+      oldStrokes: oldStrokes ?? this.oldStrokes,
+      oldImages: oldImages ?? this.oldImages,
     );
   }
 }
@@ -158,4 +168,6 @@ enum EditorHistoryItemType {
   move,
   quillChange,
   quillUndoneChange,
+  cut,
+  paste,
 }

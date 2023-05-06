@@ -155,8 +155,47 @@ class Stroke {
     }
   }
 
+  Rect? get rect {
+    if (points.isEmpty) {
+      return null;
+    }
+    double minX = points[0].x;
+    double maxX = points[0].x;
+    double minY = points[0].y;
+    double maxY = points[0].y;
+    for (final point in points) {
+      minX = min(minX, point.x);
+      minY = min(minY, point.y);
+      maxX = max(maxX, point.x);
+      maxY = max(maxY, point.y);
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  void offsetBy(double dx, double dy) {
+    for (int i = 0; i < points.length; i += 1) {
+      final p = points[i];
+      points[i] = Point(p.x + dx, p.y + dy, p.p);
+    }
+    _polygonNeedsUpdating = true;
+  }
+
+  double get minX {
+    return points.isEmpty
+        ? 0
+        : points.map((Point point) => point.x).reduce(min);
+  }
+
+  double get minY {
+    return points.isEmpty
+        ? 0
+        : points.map((Point point) => point.y).reduce(min);
+  }
+
   double get maxY {
-    return points.isEmpty ? 0 : points.map((Point point) => point.y).reduce(max);
+    return points.isEmpty
+        ? 0
+        : points.map((Point point) => point.y).reduce(max);
   }
 
   static num sqrDistBetweenPoints(Point p1, Point p2) {

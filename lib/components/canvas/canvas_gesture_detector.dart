@@ -23,10 +23,10 @@ class CanvasGestureDetector extends StatefulWidget {
     required this.onDrawUpdate,
     required this.onDrawEnd,
     required this.onPressureChanged,
-
+    required this.onMouseMoved,
+    required this.longPress,
     required this.undo,
     required this.redo,
-
     required this.pages,
     required this.initialPageIndex,
     required this.pageBuilder,
@@ -42,10 +42,13 @@ class CanvasGestureDetector extends StatefulWidget {
   final ValueChanged<ScaleStartDetails> onDrawStart;
   final ValueChanged<ScaleUpdateDetails> onDrawUpdate;
   final ValueChanged<ScaleEndDetails> onDrawEnd;
+
   /// Called when the pressure of the stylus changes,
   /// pressure is negative if stylus button is pressed
   final ValueChanged<double?> onPressureChanged;
+  final ValueChanged<Offset> onMouseMoved;
 
+  final Function(Offset position) longPress;
   final VoidCallback undo;
   final VoidCallback redo;
 
@@ -204,6 +207,7 @@ class _CanvasGestureDetectorState extends State<CanvasGestureDetector> {
       // if min == max, then the device isn't pressure sensitive
       pressure = event.pressure;
     }
+    widget.onMouseMoved(event.position);
     widget.onPressureChanged(pressure);
   }
 
@@ -219,6 +223,8 @@ class _CanvasGestureDetectorState extends State<CanvasGestureDetector> {
           child: GestureDetector(
             onSecondaryTapUp: (TapUpDetails details) => widget.undo(),
             onTertiaryTapUp: (TapUpDetails details) => widget.redo(),
+            onLongPressStart: (LongPressStartDetails details) =>
+                widget.longPress(details.localPosition),
             child: LayoutBuilder(
               builder: (BuildContext context, BoxConstraints containerBounds) {
                 this.containerBounds = containerBounds;
