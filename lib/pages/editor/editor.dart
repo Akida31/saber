@@ -333,7 +333,7 @@ class EditorState extends State<Editor> {
 
       // move all strokes and images to that position
       double minX = dimensions.left;
-      double minY = dimensions.right;
+      double minY = dimensions.top;
 
       double startX = minX;
       double startY = minY;
